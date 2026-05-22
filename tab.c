@@ -1011,6 +1011,10 @@ int main(int argc, char *argv[]) {
   memset(INDENT, ' ', padding);
 
   if (optind == argc) {
+    if (isatty(STDIN_FILENO)) {
+      usage(argv[0]);
+      return 0;
+    }
     printf("%s", VINDENT);
     tabs_abc(stdin, instr, transpose);
   } else {
