@@ -1,4 +1,4 @@
-CFLAGS ?= -Wall -Werror -pedantic -std=c89
+CFLAGS ?= -Wall -Werror -pedantic -std=gnu99
 
 PREFIX = /usr/local
 
