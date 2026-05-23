@@ -191,6 +191,39 @@ And for Cigar Box Guitar it would become:
     G│-----------------│-----------------
 ```
 
+## Finding and downloading ABC notation
+
+The `contrib/` directory includes `abc-get`, a helper script to search and download ABC notation from [thesession.org](https://thesession.org) — a large collection of traditional Irish and folk tunes.
+
+```
+$ ./contrib/abc-get -l "ode to joy"
+Searching for: ode to joy
+Found 5 tune(s)
+  1. Ode To Joy (march)
+  2. Ode To Joy (waltz)
+  3. Wandering Oileán Óir (slide)
+  4. Ochón a Dhonncha (song)
+  5. Kilmovee (polka)
+
+Enter tune number to download [1-5] (or 0 to cancel): 1
+Fetching: Ode To Joy...
+Saved to Ode_To_Joy.abc
+Tip: run ./tab -i <instrument> "Ode_To_Joy.abc" to see the tablature
+```
+
+Pipe directly into `tab` without saving to a file:
+```
+$ ./contrib/abc-get -n 1 "ode to joy" | ./tab -i whistle
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-l` | List matching tunes and download interactively |
+| `-n N` | Select tune number N (default: 1) |
+| `-h` | Show help |
+
 ## Contributing
 
 Contributions to Tab are welcome! Whether you want to report a bug, request a feature, or submit a pull request, please feel free to get involved.
