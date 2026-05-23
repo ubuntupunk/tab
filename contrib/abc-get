@@ -1,0 +1,166 @@
+#!/bin/bash
+# abc-get - Search and download ABC notation from thesession.org
+# Usage: abc-get [options] <search query>
+#        abc-get <search query> | ./tab -i guitar
+#
+# Options:
+#   -n N    Select tune number N from results (default: 1)
+#   -l      List matching tunes (prompts to download if run interactively)
+#   -h      Show this help
+
+set -euo pipefail
+
+BASE="https://thesession.org"
+SELECT=1
+LIST_ONLY=0
+
+usage() {
+  sed -n 's/^# //p; s/^#$//p' "$0"
+  echo ""
+  echo "Examples:"
+  echo "  ./contrib/abc-get \"scarborough fair\" | ./tab -i recorder"
+  echo "  ./contrib/abc-get -l \"ode to joy\""
+  echo "  ./contrib/abc-get -n 3 \"twinkle twinkle\" | ./tab -i whistle"
+  exit 0
+}
+
+# Prompt user to pick a tune number interactively
+# Returns the selected number (1-based) or empty if cancelled
+prompt_selection() {
+  local count="$1"
+  local prompt="Enter tune number to download [1-$count] (or 0 to cancel): "
+  while true; do
+    read -r -p "$prompt" choice || true
+    if [[ -z "$choice" ]]; then
+      continue
+    fi
+    if [ "$choice" = "0" ]; then
+      echo "Cancelled." >&2
+      return 1
+    fi
+    if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "$count" ] 2>/dev/null; then
+      echo "$choice"
+      return 0
+    fi
+    echo "Invalid selection. Enter a number between 0 and $count." >&2
+  done
+}
+
+urlencode() {
+  local s="$1" i c
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [-_.~a-zA-Z0-9]) printf '%s' "$c" ;;
+      ' ') printf '+' ;;
+      *) printf '%%%02X' "'$c" ;;
+    esac
+  done
+}
+
+while getopts ":n:lh" opt; do
+  case "$opt" in
+    n) SELECT="$OPTARG" ;;
+    l) LIST_ONLY=1 ;;
+    h) usage ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+if [ $# -eq 0 ]; then
+  echo "Usage: abc-get [-n N] [-l] <search query>" >&2
+  exit 1
+fi
+
+QUERY="$*"
+echo "Searching for: $QUERY" >&2
+
+UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+
+HTML=$(curl -sL --max-time 15 -A "$UA" \
+  "${BASE}/tunes/search?q=$(urlencode "$QUERY")") || {
+  echo "Error: Failed to fetch search results" >&2; exit 1
+}
+
+# Flatten to single line for reliable pattern matching
+FLAT=$(echo "$HTML" | tr -d '\n\r')
+
+# Extract tune IDs in order (from data-tuneid attributes on <a-preview>)
+mapfile -t TUNE_IDS < <(
+  echo "$FLAT" | grep -oP 'data-tuneid="\K[0-9]+' | awk '!seen[$0]++'
+)
+
+if [ ${#TUNE_IDS[@]} -eq 0 ]; then
+  echo "No tunes found for: $QUERY" >&2
+  exit 1
+fi
+
+# Extract tune titles (from <a class="manifest-item-title">TITLE</a>)
+mapfile -t TUNE_TITLES < <(
+  echo "$FLAT" | grep -oP 'class="manifest-item-title">\K[^<]+(?=</a>)' | head -n "${#TUNE_IDS[@]}"
+)
+
+# Extract tune types (from <span class="manifest-item-title detail">TYPE</span>)
+mapfile -t TUNE_TYPES < <(
+  echo "$FLAT" | grep -oP 'class="manifest-item-title detail">\s*\K[^<\s]+' | head -n "${#TUNE_IDS[@]}"
+)
+
+echo "Found ${#TUNE_IDS[@]} tune(s)" >&2
+
+# List mode
+if [ "$LIST_ONLY" = 1 ]; then
+  for i in "${!TUNE_IDS[@]}"; do
+    type="${TUNE_TYPES[$i]:-}"
+    if [ -n "$type" ]; then
+      printf "  %2d. %s (%s)\n" "$((i + 1))" "${TUNE_TITLES[$i]}" "$type"
+    else
+      printf "  %2d. %s\n" "$((i + 1))" "${TUNE_TITLES[$i]}"
+    fi
+  done
+  # If run interactively (stdin is a terminal), prompt to pick one to download
+  if [ -t 0 ]; then
+    echo "" >&2
+    if SELECT=$(prompt_selection "${#TUNE_IDS[@]}"); then
+      LIST_ONLY=0
+      INTERACTIVE_DOWNLOAD=1
+      # fall through to download logic below
+    else
+      exit 0
+    fi
+  else
+    exit 0
+  fi
+fi
+
+# Validate selection
+if [ "$SELECT" -lt 1 ] || [ "$SELECT" -gt "${#TUNE_IDS[@]}" ]; then
+  echo "Error: selection $SELECT is out of range (1-${#TUNE_IDS[@]})" >&2
+  echo "Tune(s) found:" >&2
+  for i in "${!TUNE_IDS[@]}"; do
+    echo "  $((i + 1)). ${TUNE_TITLES[$i]}" >&2
+  done
+  exit 1
+fi
+
+IDX=$((SELECT - 1))
+TUNE_ID="${TUNE_IDS[$IDX]}"
+TUNE_TITLE="${TUNE_TITLES[$IDX]}"
+echo "Fetching: $TUNE_TITLE..." >&2
+
+# Download ABC notation
+ABC=$(curl -sL --max-time 15 -A "$UA" "${BASE}/tunes/${TUNE_ID}/abc") || {
+  echo "Error: Failed to download ABC content" >&2; exit 1
+}
+
+# If we were triggered by interactive selection, save to a file
+# Otherwise (direct -n or default), print to stdout for piping
+if [ "${INTERACTIVE_DOWNLOAD:-0}" = 1 ]; then
+  FILENAME=$(echo "$TUNE_TITLE" | tr ' ' '_' | tr -cd 'A-Za-z0-9._-')
+  FILENAME="${FILENAME:-tune}.abc"
+  echo "$ABC" > "$FILENAME"
+  echo "Saved to $FILENAME" >&2
+  echo "Tip: run ./tab -i <instrument> \"$FILENAME\" to see the tablature" >&2
+else
+  echo "$ABC"
+fi
